@@ -3,6 +3,7 @@ use std::env;
 use dotenv::dotenv;
 use serde_json::json;
 
+#[tokio::main]
 pub(crate) async fn register() {
     dotenv().ok();
 

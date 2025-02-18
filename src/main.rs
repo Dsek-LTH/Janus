@@ -1,5 +1,4 @@
 use clap::Parser;
-// use tokio::task::futures;
 
 mod register;
 mod server;
@@ -15,12 +14,8 @@ fn main() {
     let args = Args::parse();
 
     if args.register {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(register::register());        
+        register::register();
     } else {
-        // server::start();
+        server::start().ok();
     }
 }
