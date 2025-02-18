@@ -1,5 +1,6 @@
 use actix_web::{get, App, HttpResponse, HttpServer, Responder};
 use dotenvy::dotenv;
+use actix_web::web::Redirect;
 use std::env;
 use url_builder::URLBuilder;
 use uuid::Uuid;
@@ -42,15 +43,14 @@ async fn status() -> impl Responder {
 #[get("/linked-role")]
 async fn linked_role() -> impl Responder {
     let OAuthData { oauth_url, uuid_state } = generate_oauth_url().await;
-    
-    HttpResponse::TemporaryRedirect()
-        
+
+    Redirect::to(oauth_url).temporary()
 }
 
 #[actix_web::main]
 pub async fn start() -> std::io::Result<()> {
     HttpServer::new(|| App::new().service(status).service(linked_role))
-        .bind(("127.0.0.1", 8080))?
+        .bind(("127.0.0.1", 3000))?
         .run()
         .await
 }
