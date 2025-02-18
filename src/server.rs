@@ -1,4 +1,5 @@
-use actix_web::{get, App, HttpResponse, HttpServer, Responder};
+use actix_web::{get, App, Error, HttpResponse, Result, HttpServer, cookie::Key};
+use actix_session::{Session, SessionMiddleware, storage::CookieSessionStore};
 use dotenvy::dotenv;
 use actix_web::web::Redirect;
 use std::env;
@@ -36,20 +37,43 @@ async fn generate_oauth_url() -> OAuthData {
 }
 
 #[get("/")]
-async fn status() -> impl Responder {
-    HttpResponse::Ok().body("Hello world!")
+async fn index(session: Session) -> Result<HttpResponse, Error> {
+    // access session data
+    let uuid = match session.get::<String>("uuid_state") {
+        Ok(Some(uuid_state)) => {
+            uuid_state
+        }
+        Ok(None) => {
+           "None".to_string()
+        }
+        Err(_) => {
+            "Error: {:?}".to_string()
+        }
+    };
+    Ok(HttpResponse::Ok().body(format!(
+        "state is {:?}!",
+        uuid
+    )))
 }
 
-#[get("/linked-role")]
-async fn linked_role() -> impl Responder {
-    let OAuthData { oauth_url, uuid_state } = generate_oauth_url().await;
 
-    Redirect::to(oauth_url).temporary()
+#[get("/linked-role")]
+async fn linked_role(session: Session) -> Result<Redirect> {
+    let OAuthData { oauth_url, uuid_state } = generate_oauth_url().await;
+    session.insert("uuid_state", uuid_state)?;
+
+    Ok(Redirect::to(oauth_url).temporary())
 }
 
 #[actix_web::main]
 pub async fn start() -> std::io::Result<()> {
-    HttpServer::new(|| App::new().service(status).service(linked_role))
+    HttpServer::new(|| App::new()
+        .wrap(
+            SessionMiddleware::builder(CookieSessionStore::default(), Key::from(&[0; 64]))
+                    .build()
+        )
+        .service(index)
+        .service(linked_role))
         .bind(("127.0.0.1", 3000))?
         .run()
         .await

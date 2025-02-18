@@ -5,6 +5,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+actix-session = { version = "0.10.1", features = ["cookie-session"] }
 actix-web = "4.9.0"
 clap = { version = "4.5.30", features = ["derive"] }
 dotenvy = "0.15.7"
