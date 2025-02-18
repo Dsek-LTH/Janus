@@ -1,5 +1,5 @@
 use actix_web::{get, App, HttpResponse, HttpServer, Responder};
-use dotenv::dotenv;
+use dotenvy::dotenv;
 use std::env;
 use url_builder::URLBuilder;
 use uuid::Uuid;
