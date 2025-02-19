@@ -2,6 +2,7 @@ use clap::Parser;
 
 mod register;
 mod server;
+mod discord;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
