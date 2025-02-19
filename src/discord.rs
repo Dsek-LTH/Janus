@@ -1,33 +1,24 @@
 use dotenvy::dotenv;
-use std::env;
+use serde::Deserialize;
+use std::{collections::HashMap, env};
 use url_builder::URLBuilder;
 use uuid::Uuid;
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
 
-pub struct OAuthData {
+pub struct DiscordOAuthData {
     pub oauth_url: String,
-    pub uuid_state: String
+    pub uuid_state: String,
 }
 
-pub struct UserData {
+#[derive(Deserialize, Debug)]
+pub struct TokenData {
     pub access_token: String,
     pub token_type: String,
     pub expires_in: u64,
     pub refresh_token: String,
-    pub scope: String
+    pub scope: String,
 }
 
-#[derive(Serialize, Deserialize)]
-struct OathTokenRequest {
-    client_id: String,
-    client_secret: String,
-    grant_type: String,
-    code: String,
-    redirect_uri: String
-}
-
-pub async fn generate_oauth_url() -> OAuthData {
+pub async fn generate_oauth_url() -> DiscordOAuthData {
     dotenv().ok();
 
     let client_id = env::var("CLIENT_ID").unwrap();
@@ -46,39 +37,31 @@ pub async fn generate_oauth_url() -> OAuthData {
         .add_param("scope", "role_connections.write identify")
         .add_param("prompt", "consent");
 
-    OAuthData {
+    DiscordOAuthData {
         oauth_url: url.build(),
-        uuid_state: state
+        uuid_state: state,
     }
 }
 
-pub async fn get_oauth_tokens(code: String) -> UserData {
+pub async fn get_oauth_tokens(code: String) -> TokenData {
     dotenv().ok();
 
-    let client_id = env::var("CLIENT_ID").unwrap();
-    let client_secret = env::var("CLIENT_SECRET").unwrap();
-    let redirect_uri = env::var("DISCORD_REDIRECT_URI").unwrap();
-
-
-    let metadata = OathTokenRequest {
-        client_id: client_id,
-        client_secret: client_secret,
-        grant_type: "authorization_code".to_string(),
-        code: code,
-        redirect_uri: redirect_uri
-    };
-
     let endpoint = "https://discord.com/api/v10/oauth2/token";
-    let data = serde_urlencoded::to_string(&metadata).expect("serialize issue");
-    println!("{}", &data);
+    let mut data = HashMap::new();
 
-    let client = reqwest::Client::new();
+    data.insert("client_id", env::var("CLIENT_ID").unwrap());
+    data.insert("client_secret", env::var("CLIENT_SECRET").unwrap());
+    data.insert("redirect_uri", env::var("DISCORD_REDIRECT_URI").unwrap());
+    data.insert("grant_type", "authorization_code".to_string());
+    data.insert("code", code);
 
-    UserData{
-        access_token: "a".to_string(),
-        token_type: "a".to_string(),
-        expires_in: 100,
-        refresh_token: "a".to_string(),
-        scope: "a".to_string()
-    }
+    reqwest::Client::new()
+        .post(endpoint)
+        .form(&data)
+        .send()
+        .await
+        .expect("Something went wrong :(")
+        .json::<TokenData>()
+        .await
+        .expect("Could not deserialize json (check discord docs for updates?)")
 }

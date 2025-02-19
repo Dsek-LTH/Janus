@@ -13,51 +13,36 @@ struct OAuthReturn {
 
 
 #[get("/")]
-async fn index(session: Session) -> Result<HttpResponse, Error> {
-    // access session data
-    let uuid = match session.get::<String>("uuid_state") {
-        Ok(Some(uuid_state)) => {
-            uuid_state
-        }
-        Ok(None) => {
-           "None".to_string()
-        }
-        Err(_) => {
-            "Error: {:?}".to_string()
-        }
-    };
-    Ok(HttpResponse::Ok().body(format!(
-        "state is {:?}!",
-        uuid
-    )))
+async fn index() -> Result<HttpResponse, Error> {
+    Ok(HttpResponse::Ok().body("hej"))
 }
 
 
 #[get("/linked-role")]
 async fn linked_role(session: Session) -> Result<Redirect> {
-    let discord::OAuthData { oauth_url, uuid_state } = discord::generate_oauth_url().await;
+    let discord::DiscordOAuthData { oauth_url, uuid_state } = discord::generate_oauth_url().await;
     session.insert("uuid_state", uuid_state)?;
 
     Ok(Redirect::to(oauth_url).temporary())
 }
 
-#[get("/discord-oauth-callback")]
-async fn discord_oauth_callback(session: Session, oauth_return: web::Query<OAuthReturn>) -> Result<HttpResponse, Error> {
-    let uuid_state = match session.get::<String>("uuid_state") {
-        Ok(Some(uuid)) => {
-            uuid
-        }
-        Ok(None) => {
-           "None".to_string()
-        }
-        Err(_) => {
-            "Error: {:?}".to_string()
-        }
-    };
+fn forbidden(body: String) -> Result<HttpResponse> {
+    Ok(HttpResponse::Forbidden().body(body))
+}
 
-    if uuid_state != oauth_return.state {
-        return Ok(HttpResponse::Forbidden().body("Oauth state not same as cashe safe.\nWho are you..."));
+#[get("/discord-oauth-callback")]
+async fn discord_oauth_callback(session: Session, oauth_return: web::Query<OAuthReturn>) -> Result<HttpResponse> {
+    if let Some(uuid) = session.get::<String>("uuid_state")? {
+        if uuid != oauth_return.state {
+            return forbidden("Oauth state not same as cached state.\nWho are you...".to_string())
+        }
+    } else {
+        return forbidden("Oauth state not found.\nWho are you...".to_string())
     }
+
+    let oath_tokens = discord::get_oauth_tokens(oauth_return.code.clone()).await;
+
+    dbg!(&oath_tokens);
 
     Ok(HttpResponse::Ok().body(oauth_return.code.clone()))
 }
