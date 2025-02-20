@@ -1,63 +1,65 @@
-use actix_web::{web, get, App, Error, HttpResponse, Result, HttpServer, cookie::Key};
-use actix_session::{Session, SessionMiddleware, storage::CookieSessionStore};
-use actix_web::web::Redirect;
-use serde::Deserialize;
 use crate::discord;
-
+use actix_session::{storage::CookieSessionStore, Session, SessionMiddleware};
+use actix_web::web::Redirect;
+use actix_web::{cookie::Key, get, web, App, Error, HttpResponse, HttpServer, Result};
+use serde::Deserialize;
 
 #[derive(Deserialize)]
 struct OAuthReturn {
     code: String,
-    state: String
+    state: String,
 }
 
+fn forbidden(body: &str) -> Result<HttpResponse> {
+    Ok(HttpResponse::Forbidden().body(body.to_string()))
+}
 
 #[get("/")]
 async fn index() -> Result<HttpResponse, Error> {
     Ok(HttpResponse::Ok().body("hej"))
 }
 
-
 #[get("/linked-role")]
 async fn linked_role(session: Session) -> Result<Redirect> {
-    let discord::DiscordOAuthData { oauth_url, uuid_state } = discord::generate_oauth_url().await;
-    session.insert("uuid_state", uuid_state)?;
-
-    Ok(Redirect::to(oauth_url).temporary())
-}
-
-fn forbidden(body: String) -> Result<HttpResponse> {
-    Ok(HttpResponse::Forbidden().body(body))
+    let url = discord::generate_oauth_url(&session).await;
+    Ok(Redirect::to(url).temporary())
 }
 
 #[get("/discord-oauth-callback")]
-async fn discord_oauth_callback(session: Session, oauth_return: web::Query<OAuthReturn>) -> Result<HttpResponse> {
-    if let Some(uuid) = session.get::<String>("uuid_state")? {
-        if uuid != oauth_return.state {
-            return forbidden("Oauth state not same as cached state.\nWho are you...".to_string())
+async fn discord_oauth_callback(
+    session: Session,
+    oauth_return: web::Query<OAuthReturn>,
+) -> Result<HttpResponse> {
+    if let Some(state) = session.get::<String>("uuid_state")? {
+        if state != oauth_return.state {
+            return forbidden("Oauth state not same as cached state.\nWho are you...?");
         }
     } else {
-        return forbidden("Oauth state not found.\nWho are you...".to_string())
+        return forbidden("Oauth state not found.\nWho are you...?");
     }
 
-    let oath_tokens = discord::get_oauth_tokens(oauth_return.code.clone()).await;
+    let oath_token = discord::fetch_oauth_tokens(&oauth_return.code).await;
+    let auth_data = discord::fetch_user_auth_data(&oath_token).await;
 
-    dbg!(&oath_tokens);
+    println!("{}", auth_data.user.username);
 
     Ok(HttpResponse::Ok().body(oauth_return.code.clone()))
 }
 
 #[actix_web::main]
 pub async fn start() -> std::io::Result<()> {
-    HttpServer::new(|| App::new()
-        .wrap(
-            SessionMiddleware::builder(CookieSessionStore::default(), Key::from(&[0; 64]))
-                    .build()
-        )
-        .service(index)
-        .service(linked_role)
-        .service(discord_oauth_callback))
+    HttpServer::new(|| {
+        App::new()
+            .wrap(
+                SessionMiddleware::builder(CookieSessionStore::default(), Key::from(&[0; 64]))
+                    .build(),
+            )
+            .service(index)
+            .service(linked_role)
+            .service(discord_oauth_callback)
+    })
     .bind(("127.0.0.1", 3000))?
     .run()
     .await
 }
+

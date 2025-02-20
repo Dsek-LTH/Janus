@@ -1,14 +1,10 @@
-use std::env;
-
-use dotenvy::dotenv;
+use crate::env;
 use serde_json::json;
 
 #[tokio::main]
-pub(crate) async fn register() {
-    dotenv().ok();
-
-    let client_id = env::var("CLIENT_ID").expect("CLIENT_ID environment variable missing");
-    let token = env::var("BOT_TOKEN").expect("BOT_TOKEN environment variable missing");
+pub async fn start() {
+    let client_id = env::var("CLIENT_ID");
+    let token = env::var("BOT_TOKEN");
 
     let metadata = json!([
         {

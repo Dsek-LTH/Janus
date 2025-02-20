@@ -3,6 +3,8 @@ use clap::Parser;
 mod register;
 mod server;
 mod discord;
+mod env;
+mod storage;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -15,7 +17,7 @@ fn main() {
     let args = Args::parse();
 
     if args.register {
-        register::register();
+        register::start();
     } else {
         server::start().ok();
     }
