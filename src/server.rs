@@ -1,13 +1,25 @@
-use crate::discord;
+use crate::{discord, env};
 use actix_session::{storage::CookieSessionStore, Session, SessionMiddleware};
 use actix_web::web::Redirect;
 use actix_web::{cookie::Key, get, web, App, Error, HttpResponse, HttpServer, Result};
 use serde::Deserialize;
+use sqlx::{Pool, Sqlite, SqlitePool};
 
 #[derive(Deserialize)]
 struct OAuthReturn {
     code: String,
     state: String,
+}
+
+#[derive(Debug)]
+struct TokenData {
+    user_id: String,
+    access_token: String,
+    refresh_token: String
+}
+
+struct AppState {
+    db: Pool<Sqlite>
 }
 
 fn forbidden(body: &str) -> Result<HttpResponse> {
@@ -46,20 +58,33 @@ async fn discord_oauth_callback(
     Ok(HttpResponse::Ok().body(oauth_return.code.clone()))
 }
 
+#[get("/users")]
+async fn list_users(data: web::Data<AppState>) -> Result<HttpResponse> {
+    let res = sqlx::query_as!(TokenData, "SELECT * FROM tokens").fetch_all(&data.db).await.unwrap();
+
+    Ok(HttpResponse::Ok().body(format!("{res:?}")))
+}
+
 #[actix_web::main]
 pub async fn start() -> std::io::Result<()> {
-    HttpServer::new(|| {
+    let db_url = env::var("DATABASE_URL");
+    let storage = SqlitePool::connect(&db_url)
+        .await
+        .expect("Could not connect to database");
+
+    HttpServer::new(move || {
+        let cookie_store =
+            SessionMiddleware::builder(CookieSessionStore::default(), Key::from(&[0; 64])).build();
+
         App::new()
-            .wrap(
-                SessionMiddleware::builder(CookieSessionStore::default(), Key::from(&[0; 64]))
-                    .build(),
-            )
+            .wrap(cookie_store)
+            .app_data(web::Data::new(AppState { db: storage.clone()}))
             .service(index)
             .service(linked_role)
+            .service(list_users)
             .service(discord_oauth_callback)
     })
     .bind(("127.0.0.1", 3000))?
     .run()
     .await
 }
-
