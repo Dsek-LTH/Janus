@@ -1,7 +1,7 @@
+use crate::{env, storage};
 use actix_session::Session;
 use serde::Deserialize;
 use std::collections::HashMap;
-use crate::{env, storage};
 use url_builder::URLBuilder;
 use uuid::Uuid;
 
@@ -9,10 +9,8 @@ use uuid::Uuid;
 #[derive(Deserialize)]
 pub struct OAuthTokenData {
     pub access_token: String,
-    pub token_type: String,
     pub expires_in: u64,
     pub refresh_token: String,
-    pub scope: String,
 }
 
 // #[allow(unused)]
@@ -20,32 +18,16 @@ pub struct OAuthTokenData {
 pub struct UserData {
     pub id: String,
     pub username: String,
-    pub avatar: String,
     pub discriminator: String,
     pub global_name: String,
-    pub public_flags: u32
+    pub public_flags: u32,
 }
 
 // #[allow(unused)]
 #[derive(Deserialize)]
-pub struct ApplicationData {
-    pub id: String,
-    pub name: String,
-    pub icon: String,
-    pub description: String,
-    pub hook: bool,
-    pub bot_public: bool,
-    pub bot_require_code_grant: bool,
-    pub verify_key: String
-}
-
-#[allow(unused)]
-#[derive(Deserialize)]
 pub struct AuthorizationData {
-    pub application: ApplicationData,
-    pub scopes: Vec<String>,
     pub expires: String,
-    pub user: UserData
+    pub user: UserData,
 }
 
 pub async fn generate_oauth_url(session: &Session) -> String {
@@ -54,7 +36,9 @@ pub async fn generate_oauth_url(session: &Session) -> String {
 
     let state = Uuid::new_v4().to_string();
 
-    session.insert("uuid_state", &state).expect("Could not insert state to session");
+    session
+        .insert("uuid_state", &state)
+        .expect("Could not insert state to session");
 
     let mut url = URLBuilder::new();
     url.set_protocol("https")
@@ -66,7 +50,7 @@ pub async fn generate_oauth_url(session: &Session) -> String {
         .add_param("state", &state)
         .add_param("scope", "role_connections.write identify")
         .add_param("prompt", "consent");
-    
+
     url.build()
 }
 
