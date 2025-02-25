@@ -1,9 +1,10 @@
-use crate::{discord, env};
+use crate::{discord, env, storage};
 use actix_session::{storage::CookieSessionStore, Session, SessionMiddleware};
 use actix_web::web::Redirect;
 use actix_web::{cookie::Key, get, web, App, Error, HttpResponse, HttpServer, Result};
+use chrono::offset::Utc;
 use serde::Deserialize;
-use sqlx::{Pool, Sqlite, SqlitePool};
+use sqlx::{Encode, FromRow, Pool, Sqlite, SqlitePool};
 
 #[derive(Deserialize)]
 struct OAuthReturn {
@@ -11,15 +12,16 @@ struct OAuthReturn {
     state: String,
 }
 
-#[derive(Debug)]
-struct TokenData {
-    user_id: String,
-    access_token: String,
-    refresh_token: String
+#[derive(Debug, FromRow, Encode)]
+pub struct TokenData {
+    pub user_id: String,
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_at: i64,
 }
 
 struct AppState {
-    db: Pool<Sqlite>
+    db: Pool<Sqlite>,
 }
 
 fn forbidden(body: &str) -> Result<HttpResponse> {
@@ -50,17 +52,29 @@ async fn discord_oauth_callback(
         return forbidden("Oauth state not found.\nWho are you...?");
     }
 
-    let oath_token = discord::fetch_oauth_tokens(&oauth_return.code).await;
-    let auth_data = discord::fetch_user_auth_data(&oath_token).await;
+    let oauth_token = discord::fetch_oauth_tokens(&oauth_return.code).await;
+    let auth_data: discord::AuthorizationData = discord::fetch_user_auth_data(&oauth_token).await;
 
-    println!("{}", auth_data.user.username);
+    let save_oauth_token = storage::SavedOAuthTokenData {
+        expires_at: Utc::now().timestamp() + oauth_token.expires_in,
+        access_token: oauth_token.access_token,
+        refresh_token: oauth_token.refresh_token,
+    };
+    storage::store_token(&auth_data.user.id, save_oauth_token).await;
+    discord::update_metadata(&auth_data.user.id).await;
 
-    Ok(HttpResponse::Ok().body(oauth_return.code.clone()))
+    Ok(HttpResponse::Ok().body(format!(
+        "Process completed for user {}",
+        &auth_data.user.username
+    )))
 }
 
 #[get("/users")]
 async fn list_users(data: web::Data<AppState>) -> Result<HttpResponse> {
-    let res = sqlx::query_as!(TokenData, "SELECT * FROM tokens").fetch_all(&data.db).await.unwrap();
+    let res = sqlx::query_as!(TokenData, "SELECT * FROM tokens")
+        .fetch_all(&data.db)
+        .await
+        .unwrap();
 
     Ok(HttpResponse::Ok().body(format!("{res:?}")))
 }
@@ -78,7 +92,9 @@ pub async fn start() -> std::io::Result<()> {
 
         App::new()
             .wrap(cookie_store)
-            .app_data(web::Data::new(AppState { db: storage.clone()}))
+            .app_data(web::Data::new(AppState {
+                db: storage.clone(),
+            }))
             .service(index)
             .service(linked_role)
             .service(list_users)
