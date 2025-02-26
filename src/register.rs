@@ -8,9 +8,9 @@ pub async fn start() {
 
     let metadata = json!([
         {
-            "key": "dsekmember",
-            "name": "Dsek Member",
-            "description": "Member of the Dsek Guild",
+            "key": "dsek_member",
+            "name": "Dsek member",
+            "description": "Member of the D-guild at TLTH",
             "type": 7
         }
     ]);

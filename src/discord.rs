@@ -1,48 +1,43 @@
-use crate::{env, storage, storage::SavedOAuthTokenData};
+use crate::{
+    env,
+    server::{from_server, AppState},
+    storage::{self, OAuthCredentials},
+};
 use actix_session::Session;
-use chrono::offset::Utc;
+use actix_web::{web, Result};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use url_builder::URLBuilder;
 use uuid::Uuid;
 
-// #[allow(unused)]
 #[derive(Deserialize)]
-pub struct OAuthTokenData {
-    pub access_token: String,
-    pub expires_in: i64,
-    pub refresh_token: String,
-}
-
-// #[allow(unused)]
-#[derive(Deserialize)]
-pub struct UserData {
+pub struct UserDataResponse {
     pub id: String,
     pub username: String,
-    pub discriminator: String,
-    pub global_name: String,
-    pub public_flags: u32,
+    // pub discriminator: String,
+    // pub global_name: String,
+    // pub public_flags: u32,
 }
 
-// #[allow(unused)]
 #[derive(Deserialize)]
-pub struct AuthorizationData {
-    pub expires: String,
-    pub user: UserData,
+pub struct AuthDataResponse {
+    // pub expires: String,
+    pub user: UserDataResponse,
 }
 
 #[derive(Serialize)]
-struct MetadataUpdateData {
+struct MetadataUpdate {
     platform_name: String,
     platform_username: String,
-    metadata: MetadataData,
+    metadata: Metadata,
 }
 #[derive(Serialize)]
-struct MetadataData {
-    dsekmember: i8,
+struct Metadata {
+    dsek_member: bool,
 }
 
-pub async fn generate_oauth_url(session: &Session) -> String {
+pub fn generate_oauth_url(session: &Session) -> String {
     let client_id = env::var("CLIENT_ID");
     let redirect_uri = env::var("DISCORD_REDIRECT_URI");
 
@@ -66,7 +61,24 @@ pub async fn generate_oauth_url(session: &Session) -> String {
     url.build()
 }
 
-pub async fn fetch_oauth_tokens(code: &str) -> OAuthTokenData {
+pub async fn fetch_oauth_tokens(code: &str) -> Result<OAuthCredentials> {
+    #[derive(Deserialize)]
+    struct OAuthResponse {
+        access_token: String,
+        expires_in: i64,
+        refresh_token: String,
+    }
+
+    impl From<OAuthResponse> for OAuthCredentials {
+        fn from(oauth_resp: OAuthResponse) -> Self {
+            OAuthCredentials {
+                access_token: oauth_resp.access_token,
+                refresh_token: oauth_resp.refresh_token,
+                expires_at: Utc::now().timestamp() + oauth_resp.expires_in,
+            }
+        }
+    }
+
     let endpoint = "https://discord.com/api/v10/oauth2/token";
     let mut data = HashMap::new();
 
@@ -76,40 +88,33 @@ pub async fn fetch_oauth_tokens(code: &str) -> OAuthTokenData {
     data.insert("grant_type", "authorization_code".to_string());
     data.insert("code", code.to_string());
 
-    reqwest::Client::new()
+    let res = reqwest::Client::new()
         .post(endpoint)
         .form(&data)
         .send()
-        .await
-        .expect("Something went wrong when sending OAuth token request to Discord")
-        .json()
-        .await
-        .expect("Could not deserialize OAuth token data (check Discord docs for updates?)")
+        .await.map_err(from_server)?
+        .json::<OAuthResponse>()
+        .await.map_err(from_server)?
+        .into();
+
+    Ok(res)
 }
 
-pub async fn fetch_user_auth_data(oauth: &OAuthTokenData) -> AuthorizationData {
+pub async fn fetch_user_auth_data(access_token: &str) -> Result<AuthDataResponse> {
     let endpoint = "https://discord.com/api/v10/oauth2/@me";
 
-    reqwest::Client::new()
+    let res = reqwest::Client::new()
         .get(endpoint)
-        .header("Authorization", format!("Bearer {}", oauth.access_token))
+        .header("Authorization", format!("Bearer {}", access_token))
         .send()
-        .await
-        .expect("Something went wrong when fetching user data")
-        .json()
-        .await
-        .expect("Could not deserialize Discord user data (check Discord docs for updates?)")
+        .await.map_err(from_server)?
+        .json::<AuthDataResponse>()
+        .await.map_err(from_server)?;
+
+    Ok(res)
 }
 
-fn is_valid(oauth: &SavedOAuthTokenData) -> bool {
-    if oauth.expires_at <= chrono::Utc::now().timestamp() {
-        true
-    } else {
-        false
-    }
-}
-
-async fn refresh_token(oauth: SavedOAuthTokenData) -> SavedOAuthTokenData {
+async fn refresh_token(oauth: OAuthCredentials) -> Result<OAuthCredentials> {
     let endpoint = "https://discord.com/api/v10/oauth2/token";
     let mut data = HashMap::new();
 
@@ -118,59 +123,44 @@ async fn refresh_token(oauth: SavedOAuthTokenData) -> SavedOAuthTokenData {
     data.insert("grant_type", "refresh_token".to_string());
     data.insert("refresh_token", oauth.refresh_token);
 
-    let gotten_data: OAuthTokenData = reqwest::Client::new()
+    let res = reqwest::Client::new()
         .post(endpoint)
         .form(&data)
         .send()
-        .await
-        .expect("Something went wrong when sending OAuth token request to Discord")
+        .await.map_err(from_server)?
         .json()
-        .await
-        .expect("Could not deserialize OAuth token data (check Discord docs for updates?)");
+        .await.map_err(from_server)?;
 
-    SavedOAuthTokenData {
-        access_token: gotten_data.access_token,
-        expires_at: Utc::now().timestamp() + gotten_data.expires_in,
-        refresh_token: gotten_data.refresh_token,
-    }
+    Ok(res)
 }
 
-pub async fn update_metadata(user_id: &str) {
-    if let Some(mut oauth) = storage::get_token(user_id).await {
-        if !is_valid(&oauth) {
-            oauth = refresh_token(oauth).await;
-        }
-
-        // FIXME: this is ugly and causes us to derive clone in the type definition
-        // plz help me fix, I don't know how the borrow checker works
-        storage::store_token(user_id, oauth.clone()).await;
-
-        // TODO: Fetch proper metadata here
-        let mdata = MetadataData { dsekmember: 1 };
-        let data = MetadataUpdateData {
-            platform_name: "Dsek Member".to_string(),
-            platform_username: format!("Dsek{}", user_id),
-            metadata: mdata,
-        };
-
-        let endpoint = format!(
-            "https://discord.com/api/v10/users/@me/applications/{}/role-connection",
-            env::var("CLIENT_ID")
-        );
-
-        let res = reqwest::Client::new()
-            .put(endpoint)
-            .json(&data)
-            .header("Authorization", format!("Bearer {}", oauth.access_token))
-            .send()
-            .await;
-
-        if let Ok(res) = res {
-            if res.status().is_success() {
-                println!("SUCCESS: {}", res.text().await.unwrap());
-            } else {
-                println!("ERROR: {}", res.text().await.unwrap());
-            }
-        }
+pub async fn update_metadata(data: &web::Data<AppState>, user_id: &str) -> Result<()> {
+    let mut oauth = storage::get_token(&data.db, user_id).await?;
+    if oauth.expires_at <= Utc::now().timestamp() {
+        oauth = refresh_token(oauth).await?;
     }
+
+    // TODO: Fetch proper metadata here
+    let mdata = Metadata { dsek_member: true };
+    let udata = MetadataUpdate {
+        platform_name: "D-sektionen inom TLTH".to_string(),
+        platform_username: user_id.to_string(), // should be stil-id once that's fetched, im guessing?
+        metadata: mdata,
+    };
+
+    let endpoint = format!(
+        "https://discord.com/api/v10/users/@me/applications/{}/role-connection",
+        env::var("CLIENT_ID")
+    );
+
+    reqwest::Client::new()
+        .put(endpoint)
+        .json(&udata)
+        .header("Authorization", format!("Bearer {}", oauth.access_token))
+        .send()
+        .await.map_err(from_server)?;
+
+    storage::store_token(&data.db, user_id, oauth).await?;
+
+    Ok(())
 }

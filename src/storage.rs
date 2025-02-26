@@ -1,49 +1,41 @@
+use actix_web::Result;
 use serde::Deserialize;
-use sqlx::sqlite::SqlitePool;
+use sqlx::{Pool, Sqlite};
 
-use crate::server::TokenData;
+use crate::server::from_server;
 
 #[derive(Deserialize, Clone)]
-pub struct SavedOAuthTokenData {
+pub struct OAuthCredentials {
     pub access_token: String,
     pub expires_at: i64,
     pub refresh_token: String,
 }
 
-// FIXME: Both of these functions are heavily hacked together and require looking over
-// I just did whatever I could to get shit working at all.
+pub async fn get_token(db: &Pool<Sqlite>, user_id: &str) -> Result<OAuthCredentials> {
+    let res = sqlx::query_as!(
+        OAuthCredentials,
+        "SELECT access_token, refresh_token, expires_at 
+        FROM discord_tokens 
+        WHERE user_id = ?",
+        user_id
+    )
+    .fetch_one(db)
+    .await.map_err(from_server)?;
 
-pub async fn get_token(user_id: &str) -> Option<SavedOAuthTokenData> {
-    let db = SqlitePool::connect("sqlite:database.db").await.unwrap();
-    let data: TokenData = sqlx::query_as::<_, TokenData>("SELECT * FROM tokens WHERE user_id = ?")
-        .bind(&user_id)
-        .fetch_one(&db)
-        .await
-        .unwrap();
-
-    Some(SavedOAuthTokenData {
-        access_token: data.access_token,
-        expires_at: data.expires_at,
-        refresh_token: data.refresh_token,
-    })
+    Ok(res)
 }
 
-pub async fn store_token(user_id: &str, oauth: SavedOAuthTokenData) {
-    let data = TokenData {
-        user_id: user_id.to_string(),
-        access_token: oauth.access_token,
-        refresh_token: oauth.refresh_token,
-        expires_at: oauth.expires_at,
-    };
-    let db = SqlitePool::connect("sqlite:database.db").await.unwrap();
-    sqlx::query(
-        "INSERT OR REPLACE INTO tokens (user_id, access_token, refresh_token, expires_at) VALUES (?, ?, ?, ?)",
+pub async fn store_token(db: &Pool<Sqlite>, user_id: &str, oauth: OAuthCredentials) -> Result<()> {
+    sqlx::query!(
+        "INSERT OR REPLACE INTO discord_tokens (user_id, access_token, refresh_token, expires_at) 
+        VALUES (?, ?, ?, ?)",
+        user_id,
+        oauth.access_token,
+        oauth.refresh_token,
+        oauth.expires_at
     )
-    .bind(data.user_id)
-    .bind(data.access_token)
-    .bind(data.refresh_token)
-    .bind(data.expires_at)
-    .execute(&db)
-    .await
-    .unwrap();
+    .execute(db)
+    .await.map_err(from_server)?;
+
+    Ok(())
 }
