@@ -1,19 +1,24 @@
 use actix_web::Result;
-use serde::Deserialize;
 use sqlx::{Pool, Sqlite};
 
-use crate::server::from_server;
+use crate::{discord::{DiscordOAuthCredentials, DiscordUserData}, dsek::DsekUserData, server::from_server};
 
-#[derive(Deserialize, Clone)]
-pub struct OAuthCredentials {
-    pub access_token: String,
-    pub expires_at: i64,
-    pub refresh_token: String,
+pub async fn fetch_dsek_username(db: &Pool<Sqlite>, user_id: &str) -> Result<String> {
+    let res = sqlx::query!(
+        "SELECT stil_id
+        FROM connected_accounts
+        WHERE user_id = ?",
+        user_id
+    )
+    .fetch_one(db)
+    .await.map_err(from_server)?;
+
+    Ok(res.stil_id)
 }
 
-pub async fn get_token(db: &Pool<Sqlite>, user_id: &str) -> Result<OAuthCredentials> {
+pub async fn get_token(db: &Pool<Sqlite>, user_id: &str) -> Result<DiscordOAuthCredentials> {
     let res = sqlx::query_as!(
-        OAuthCredentials,
+        DiscordOAuthCredentials,
         "SELECT access_token, refresh_token, expires_at 
         FROM discord_tokens 
         WHERE user_id = ?",
@@ -25,7 +30,7 @@ pub async fn get_token(db: &Pool<Sqlite>, user_id: &str) -> Result<OAuthCredenti
     Ok(res)
 }
 
-pub async fn store_token(db: &Pool<Sqlite>, user_id: &str, oauth: OAuthCredentials) -> Result<()> {
+pub async fn store_discord_token(db: &Pool<Sqlite>, user_id: &str, oauth: DiscordOAuthCredentials) -> Result<()> {
     sqlx::query!(
         "INSERT OR REPLACE INTO discord_tokens (user_id, access_token, refresh_token, expires_at) 
         VALUES (?, ?, ?, ?)",
@@ -38,4 +43,58 @@ pub async fn store_token(db: &Pool<Sqlite>, user_id: &str, oauth: OAuthCredentia
     .await.map_err(from_server)?;
 
     Ok(())
+}
+
+pub async fn store_discord_user(db: &Pool<Sqlite>, user_data: &DiscordUserData) -> Result<()> {
+    sqlx::query!(
+        "INSERT OR REPLACE INTO authorized_discord_users (user_id, username)
+        VALUES (?, ?)",
+        user_data.user_id,
+        user_data.username
+    )
+    .execute(db)
+    .await.map_err(from_server)?;
+
+    Ok(())
+}
+
+pub async fn store_dsek_user(db: &Pool<Sqlite>, user_data: &DsekUserData) -> Result<()> {
+    sqlx::query!(
+        "INSERT OR REPLACE INTO authorized_dsek_users (stil_id, name)
+        VALUES (?, ?)",
+        user_data.stil_id,
+        user_data.name
+    )
+    .execute(db)
+    .await.map_err(from_server)?;
+
+    Ok(())
+}
+
+pub async fn connect_users(db: &Pool<Sqlite>, user_id: &str, stil_id: &str) -> Result<()> {
+    sqlx::query!(
+        "INSERT OR REPLACE INTO connected_accounts (user_id, stil_id)
+        VALUES (?, ?)",
+        user_id,
+        stil_id
+    )
+    .execute(db)
+    .await.map_err(from_server)?;
+    
+    Ok(())
+}
+
+pub async fn fetch_discord_username(db: &Pool<Sqlite>, discord_user_id: &str) -> Result<String> {
+    let res = sqlx::query!(
+        "SELECT username
+        FROM authorized_discord_users
+        WHERE user_id = ?",
+        discord_user_id
+    )
+    .fetch_one(db)
+    .await
+    .map_err(from_server)
+    .map(|res| res.username)?;
+
+    Ok(res)
 }
